@@ -517,15 +517,30 @@
     text(font: font-kaiti, weight: "bold", it.body)
   }
 
-  // [1] 标准标题样式映射
+  // [1] 标准标题样式映射 (4-Level Hierarchy)
+  // Chapter: Custom #大标题 function (not a heading)
+  // L1 (=): Section separator
+  // L2 (==): Topic (考点) - populates Syllabus
+  // L3 (===): Subtopic (小标题)
+
+  // Counter for Topics (resets per Section)
+  let topic-num = counter("topic-heading")
+  // Counter for Subtopics (resets per Topic)
+  let subtopic-num = counter("subtopic-heading")
+
   show heading.where(level: 1): it => {
-    // Level 1: 章标题 (大标题)
-    counter(heading).update(0)
-    header-banner(counter(heading).display(), it.body)
+    // Level 1: Section (节)
+    topic-num.update(0) // Reset topic counter
+    v(1em)
+    separator(it.body)
+    v(0.5em)
   }
 
   show heading.where(level: 2): it => {
     // Level 2: Topic (考点)
+    topic-num.step()
+    subtopic-num.update(0) // Reset subtopic counter
+    v(0.8em)
     grid(
       columns: (auto, 1fr),
       gutter: 10pt,
@@ -535,7 +550,7 @@
         weight: "bold",
         size: 14pt,
         font: font-sans,
-        counter(heading).display(),
+        context topic-num.display(),
       ))),
       text(size: 16pt, weight: "bold", fill: color-dark, font: font-sans, it.body),
     )
@@ -544,25 +559,16 @@
 
   show heading.where(level: 3): it => {
     // Level 3: Subtopic (小标题)
+    subtopic-num.step()
     v(0.5em)
-    text(fill: color-main, size: 14pt, weight: "extrabold", font: font-sans, counter(heading).display())
+    text(fill: color-main, size: 14pt, weight: "extrabold", font: font-sans, context subtopic-num.display())
     h(0.5em)
     text(fill: color-dark, size: 12pt, weight: "bold", font: font-sans, it.body)
     v(0.3em)
   }
 
-  // Set numbering
-  set heading(numbering: (..nums) => {
-    let vals = nums.pos()
-    if vals.len() == 1 {
-      let v = vals.at(0)
-      if v < 10 { "0" + str(v) } else { str(v) }
-    } else if vals.len() == 2 {
-      str(vals.at(1))
-    } else if vals.len() == 3 {
-      str(vals.at(2))
-    }
-  })
+  // Set numbering (for outline/TOC purposes, not visual display)
+  set heading(numbering: none)
 
   // 原文档内容
   doc
@@ -670,24 +676,21 @@
 #let syllabus-auto(number-prefix: "1") = {
   let c-accent = color-main
   let c-desc = rgb("#888888")
-  let pt-counter = counter("syllabus-pt-" + number-prefix)
-  pt-counter.update(0)
 
   let ref-tag(t) = text(size: 7.5pt, weight: "bold", fill: c-accent.lighten(30%), style: "italic")[Ref: #t]
   let num-badge(n) = box(fill: c-accent, radius: 2pt, width: 14pt, height: 14pt, align(center + horizon, text(
     fill: white,
     size: 9pt,
     weight: "bold",
-    n,
+    str(n),
   )))
 
-  // 获取所有 Section 和 Topic 和 Topic Metadata
+  // 获取所有 Section (L1) 和 Topic (L2) 和 Topic Metadata
   context {
     let all-meta = query(metadata)
-    let sections = all-meta.filter(m => m.value.at("type", default: "") == "syllabus-section")
+    let sections = query(heading.where(level: 1)) // L1 Sections
     let topic-metas = all-meta.filter(m => m.value.at("type", default: "") == "syllabus-topic")
-
-    let topics = query(heading.where(level: 2))
+    let topics = query(heading.where(level: 2)) // L2 Topics
 
     // 混合排序：Topic Metadata 应紧跟在 Topic Heading 之后
     let all-elements = (sections + topics + topic-metas).sorted(key: it => (
@@ -695,17 +698,23 @@
       it.location().position().y,
     ))
 
+    // Local counter for topic numbering
+    let topic-count = 0
+
     columns(2, gutter: 1cm)[
       #set par(leading: 0.5em, justify: true)
 
       #for (i, elem) in all-elements.enumerate() {
         if elem.func() == metadata {
           // --- Metadata Elements ---
-          let m-type = elem.value.at("type", default: "")
+          // Only "syllabus-topic" metadata is expected here
+          // Skip it as it's handled by look-ahead in the Heading branch.
+        } else if elem.func() == heading {
+          let lvl = elem.depth
 
-          if m-type == "syllabus-section" {
-            // Section Title
-            let sec-title = elem.value.title.replace("SECTION", "").trim(" |").split("|").last()
+          if lvl == 1 {
+            // --- Section (L1) Heading ---
+            let sec-title = elem.body
 
             block(below: 16pt, breakable: false)[
               #grid(
@@ -718,41 +727,39 @@
               #v(-3pt)
               #pad(left: 12pt, line(length: 100%, stroke: 0.5pt + c-accent.transparentize(80%)))
             ]
-          }
-          // Note: "syllabus-topic" metadata is handled by look-ahead in the Heading branch.
-          // If we encounter it here, we skip it to avoid duplication.
-        } else if elem.func() == heading {
-          // --- Topic Heading ---
+          } else if lvl == 2 {
+            // --- Topic (L2) Heading ---
+            topic-count = topic-count + 1
 
-          // Look ahead for Metadata
-          let my-meta = (ref: "", desc: "")
-          if i + 1 < all-elements.len() {
-            let next-elem = all-elements.at(i + 1)
-            // Ensure it is metadata and correct type
-            if next-elem.func() == metadata and next-elem.value.at("type", default: "") == "syllabus-topic" {
-              my-meta = next-elem.value
-            }
-          }
-
-          pt-counter.step()
-          let title-text = elem.body
-
-          pad(left: 1.2em)[
-            #block(breakable: false, below: 18pt)[
-              #grid(
-                columns: (14pt, 1fr, auto),
-                gutter: 6pt,
-                align: horizon,
-                num-badge(pt-counter.display()),
-                text(weight: "bold", size: 10pt, fill: color-dark, font: font-sans, title-text),
-                if my-meta.ref != "" { ref-tag(my-meta.ref) },
-              )
-              #if my-meta.desc != "" {
-                v(5pt)
-                pad(left: 20pt, text(size: 8.5pt, fill: c-desc, weight: "regular")[#my-meta.desc])
+            // Look ahead for Metadata
+            let my-meta = (ref: "", desc: "")
+            if i + 1 < all-elements.len() {
+              let next-elem = all-elements.at(i + 1)
+              // Ensure it is metadata and correct type
+              if next-elem.func() == metadata and next-elem.value.at("type", default: "") == "syllabus-topic" {
+                my-meta = next-elem.value
               }
+            }
+
+            let title-text = elem.body
+
+            pad(left: 1.2em)[
+              #block(breakable: false, below: 18pt)[
+                #grid(
+                  columns: (14pt, 1fr, auto),
+                  gutter: 6pt,
+                  align: horizon,
+                  num-badge(topic-count),
+                  text(weight: "bold", size: 10pt, fill: color-dark, font: font-sans, title-text),
+                  if my-meta.ref != "" { ref-tag(my-meta.ref) },
+                )
+                #if my-meta.desc != "" {
+                  v(5pt)
+                  pad(left: 20pt, text(size: 8.5pt, fill: c-desc, weight: "regular")[#my-meta.desc])
+                }
+              ]
             ]
-          ]
+          }
         }
       }
     ]
